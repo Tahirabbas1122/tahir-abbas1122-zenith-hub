@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySignedDownloadToken } from '@/lib/storage';
 import { prisma } from '@/lib/prisma';
+import path from 'path';
+import fs from 'fs';
 
 export async function GET(
   req: NextRequest,
@@ -34,7 +36,28 @@ export async function GET(
       return new NextResponse('Requested binary not found.', { status: 404 });
     }
 
-    // Generate simulated realistic binary payload
+    // Check if the physical file exists on local disk
+    const diskCandidates = [
+      path.join(process.cwd(), 'storage', file.storageKey),
+      path.join(process.cwd(), file.storageKey),
+    ];
+
+    for (const diskPath of diskCandidates) {
+      if (fs.existsSync(diskPath)) {
+        const fileBuffer = await fs.promises.readFile(diskPath);
+        return new NextResponse(fileBuffer, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(fn)}"`,
+            'Content-Length': fileBuffer.length.toString(),
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          },
+        });
+      }
+    }
+
+    // Generate simulated realistic binary payload if physical file is not on disk (seed data fallback)
     const demoPayload = `--- ZENITH SOFTWARE HUB VERIFIED BINARY ---
 Software: ${file.software.title}
 Version: ${file.version}

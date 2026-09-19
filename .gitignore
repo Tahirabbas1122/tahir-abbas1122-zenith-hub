@@ -51,6 +51,7 @@ dev.db-wal
 /prisma/dev.db-journal
 /prisma/dev.db-shm
 /prisma/dev.db-wal
+/storage
 # ==============================================================================
 
 # vercel

@@ -52,6 +52,7 @@ export const softwareItemSchema = z.object({
   tags: z.array(z.string()).default([]),
   downloadFiles: z.array(
     z.object({
+      id: z.string().optional(),
       platform: z.enum(['WINDOWS', 'MACOS', 'LINUX', 'ANDROID', 'IOS']),
       architecture: z.string().default('x64'),
       version: z.string().default('1.0.0'),

@@ -66,7 +66,78 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json({ message: 'Software updated successfully', item: serializeData(updated) });
+    // If download files provided, update or create them
+    if (data.downloadFiles && data.downloadFiles.length > 0) {
+      for (const f of data.downloadFiles) {
+        if (f.id) {
+          await prisma.downloadFile.update({
+            where: { id: f.id },
+            data: {
+              platform: f.platform,
+              architecture: f.architecture,
+              version: f.version || data.version,
+              fileName: f.fileName,
+              fileSize: BigInt(f.fileSize),
+              formattedSize: f.formattedSize,
+              fileHash: f.fileHash || null,
+              storageKey: f.storageKey,
+              isPrimary: f.isPrimary ?? true,
+            },
+          });
+        } else {
+          // If no ID, check if there is an existing primary file to update
+          const existingPrimary = await prisma.downloadFile.findFirst({
+            where: {
+              softwareId: id,
+              OR: [{ isPrimary: true }, { platform: f.platform }],
+            },
+          });
+
+          if (existingPrimary) {
+            await prisma.downloadFile.update({
+              where: { id: existingPrimary.id },
+              data: {
+                platform: f.platform,
+                architecture: f.architecture,
+                version: f.version || data.version,
+                fileName: f.fileName,
+                fileSize: BigInt(f.fileSize),
+                formattedSize: f.formattedSize,
+                fileHash: f.fileHash || null,
+                storageKey: f.storageKey,
+                isPrimary: f.isPrimary ?? true,
+              },
+            });
+          } else {
+            await prisma.downloadFile.create({
+              data: {
+                softwareId: id,
+                platform: f.platform,
+                architecture: f.architecture,
+                version: f.version || data.version,
+                fileName: f.fileName,
+                fileSize: BigInt(f.fileSize),
+                formattedSize: f.formattedSize,
+                fileHash: f.fileHash || null,
+                storageKey: f.storageKey,
+                isPrimary: f.isPrimary ?? true,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    // Refetch updated item with fresh downloadFiles list
+    const finalItem = await prisma.softwareItem.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        downloadFiles: true,
+      },
+    });
+
+    return NextResponse.json({ message: 'Software updated successfully', item: serializeData(finalItem || updated) });
   } catch (error) {
     console.error('Error updating software item:', error);
     return NextResponse.json({ error: 'Failed to update software item' }, { status: 500 });

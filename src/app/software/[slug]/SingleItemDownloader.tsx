@@ -124,7 +124,7 @@ export function SingleItemDownloader({ software }: SingleItemDownloaderProps) {
       )}
 
       {/* Selected file summary */}
-      {selectedFile && (
+      {selectedFile ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 space-y-1 text-xs">
           <div className="flex items-center justify-between text-slate-400">
             <span>Package Size:</span>
@@ -141,6 +141,13 @@ export function SingleItemDownloader({ software }: SingleItemDownloaderProps) {
             </span>
           </div>
         </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-4 text-center space-y-1 text-xs">
+          <p className="font-semibold text-slate-300">No Installer Attached</p>
+          <p className="text-[11px] text-slate-500">
+            An administrator has not yet uploaded a download package for this item.
+          </p>
+        </div>
       )}
 
       {/* Action Buttons */}
@@ -148,26 +155,32 @@ export function SingleItemDownloader({ software }: SingleItemDownloaderProps) {
         {/* Direct Signed Download */}
         <button
           onClick={handleDirectDownload}
-          disabled={isDownloading}
-          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 via-cyan-400 to-indigo-600 py-3 px-4 text-xs font-bold text-slate-950 shadow-lg shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 hover:scale-[1.02] transition-all disabled:opacity-50"
+          disabled={isDownloading || !selectedFile}
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 via-cyan-400 to-indigo-600 py-3 px-4 text-xs font-bold text-slate-950 shadow-lg shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 hover:scale-[1.02] transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
         >
           {isDownloading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>Signing URL & Starting...</span>
             </>
+          ) : !selectedFile ? (
+            <>
+              <Download className="h-4 w-4 opacity-50" />
+              <span>Download Package Coming Soon</span>
+            </>
           ) : (
             <>
               <Download className="h-4 w-4" />
-              <span>Download Directly ({selectedFile?.formattedSize || 'Free'})</span>
+              <span>Download Directly ({selectedFile.formattedSize})</span>
             </>
           )}
         </button>
 
         {/* Add to Multi-Select Basket */}
         <button
-          onClick={() => toggleItem(software, selectedFile)}
-          className={`w-full flex items-center justify-center gap-2 rounded-xl border py-2.5 px-4 text-xs font-semibold transition-all ${
+          onClick={() => selectedFile && toggleItem(software, selectedFile)}
+          disabled={!selectedFile}
+          className={`w-full flex items-center justify-center gap-2 rounded-xl border py-2.5 px-4 text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
             inBasket
               ? 'border-cyan-500/50 bg-cyan-500/20 text-cyan-300'
               : 'border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-600 hover:bg-slate-800'

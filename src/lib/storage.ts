@@ -17,7 +17,7 @@ const isAWSConfigured = Boolean(
 );
 
 let s3Client: S3Client | null = null;
-let bucketName = process.env.R2_BUCKET_NAME || process.env.AWS_BUCKET_NAME || 'zenith-hub-storage';
+const bucketName = process.env.R2_BUCKET_NAME || process.env.AWS_BUCKET_NAME || 'zenith-hub-storage';
 
 if (isR2Configured) {
   s3Client = new S3Client({
@@ -113,3 +113,66 @@ export function verifySignedDownloadToken(params: {
     return false;
   }
 }
+
+/**
+ * Formats byte size into human readable string (e.g. "45.2 MB")
+ */
+export function formatBytes(bytes: number, decimals = 1): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+/**
+ * Generates a presigned upload URL for Cloudflare R2 / AWS S3 direct client uploads.
+ * If cloud storage is unconfigured or in mock mode, returns the local direct upload endpoint.
+ */
+export async function generatePresignedUploadUrl(params: {
+  fileName: string;
+  contentType?: string;
+  slug: string;
+  expiresInSeconds?: number;
+}): Promise<{
+  uploadUrl: string;
+  storageKey: string;
+  method: 'PUT' | 'POST';
+  provider: 'r2' | 's3' | 'local';
+}> {
+  const sanitizedFileName = params.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storageKey = `uploads/${params.slug}/${Date.now()}-${sanitizedFileName}`;
+
+  if (s3Client && process.env.STORAGE_PROVIDER !== 'mock') {
+    try {
+      const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: storageKey,
+        ContentType: params.contentType || 'application/octet-stream',
+      });
+
+      const uploadUrl = await getSignedUrl(s3Client, command, {
+        expiresIn: params.expiresInSeconds || 3600,
+      });
+
+      return {
+        uploadUrl,
+        storageKey,
+        method: 'PUT',
+        provider: isR2Configured ? 'r2' : 's3',
+      };
+    } catch (err) {
+      console.warn('⚠️ Cloud storage upload presign failed, falling back to local handler:', err);
+    }
+  }
+
+  // Fallback to local upload endpoint
+  return {
+    uploadUrl: '/api/admin/upload/direct',
+    storageKey,
+    method: 'POST',
+    provider: 'local',
+  };
+}
+

@@ -20,6 +20,13 @@ import {
   Activity,
   Sparkles,
   Search,
+  UploadCloud,
+  FileCheck,
+  CheckCircle2,
+  AlertCircle,
+  FileUp,
+  RefreshCw,
+  FileText,
 } from 'lucide-react';
 import { SoftwareItemData, ReviewData, DownloadLogData, CategoryData } from '@/types';
 import { formatDate } from '@/lib/utils';
@@ -63,10 +70,124 @@ export default function AdminPage() {
   const [formIsFeatured, setFormIsFeatured] = useState(false);
   const [formIsTrending, setFormIsTrending] = useState(false);
 
-  // Download File Sub-form
+  // Download File / Installer Upload State
   const [filePlatform, setFilePlatform] = useState<'WINDOWS' | 'MACOS' | 'LINUX' | 'ANDROID' | 'IOS'>('WINDOWS');
-  const [fileName, setFileName] = useState('');
-  const [fileSizeMB, setFileSizeMB] = useState(150);
+  const [fileArchitecture, setFileArchitecture] = useState('x64');
+  const [uploadedFileId, setUploadedFileId] = useState<string | undefined>(undefined);
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploadedFileSize, setUploadedFileSize] = useState(0);
+  const [uploadedFormattedSize, setUploadedFormattedSize] = useState('');
+  const [uploadedStorageKey, setUploadedStorageKey] = useState('');
+  const [uploadedFileHash, setUploadedFileHash] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProvider, setUploadProvider] = useState<'r2' | 's3' | 'local' | null>(null);
+
+  const detectPlatform = (name: string): 'WINDOWS' | 'MACOS' | 'LINUX' | 'ANDROID' | 'IOS' => {
+    const lower = name.toLowerCase();
+    if (lower.endsWith('.exe') || lower.endsWith('.msi')) return 'WINDOWS';
+    if (lower.endsWith('.dmg') || lower.endsWith('.pkg')) return 'MACOS';
+    if (lower.endsWith('.apk')) return 'ANDROID';
+    if (lower.endsWith('.ipa')) return 'IOS';
+    if (lower.endsWith('.tar.gz') || lower.endsWith('.appimage') || lower.endsWith('.deb') || lower.endsWith('.rpm')) return 'LINUX';
+    return 'WINDOWS';
+  };
+
+  const formatSize = (bytes: number): string => {
+    if (!bytes || bytes <= 0) return '0 MB';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  };
+
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadSuccess(false);
+    setUploadError(null);
+
+    const autoPlatform = detectPlatform(file.name);
+    setFilePlatform(autoPlatform);
+    if (autoPlatform === 'ANDROID') setFileArchitecture('apk');
+    else if (autoPlatform === 'IOS') setFileArchitecture('ipa');
+    else setFileArchitecture('x64');
+
+    const cleanSlug = formSlug.trim() || file.name.split('.')[0].toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+    try {
+      // 1. Get presigned upload URL
+      const presignRes = await fetch('/api/admin/upload/presign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type || 'application/octet-stream',
+          slug: cleanSlug,
+        }),
+      });
+
+      if (!presignRes.ok) {
+        const err = await presignRes.json();
+        throw new Error(err.error || 'Failed to initialize upload session');
+      }
+
+      const { uploadUrl, storageKey, method, provider } = await presignRes.json();
+      setUploadProvider(provider);
+
+      // 2. Upload file directly with live progress
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, uploadUrl);
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percent);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Upload failed with HTTP status ${xhr.status}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Network connection failed during upload'));
+
+        if (method === 'PUT') {
+          xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+          xhr.send(file);
+        } else {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('storageKey', storageKey);
+          formData.append('slug', cleanSlug);
+          xhr.send(formData);
+        }
+      });
+
+      const formatted = formatSize(file.size);
+      setUploadedFileName(file.name);
+      setUploadedFileSize(file.size);
+      setUploadedFormattedSize(formatted);
+      setUploadedStorageKey(storageKey);
+      setUploadProgress(100);
+      setUploadSuccess(true);
+    } catch (err: unknown) {
+      console.error('File upload error:', err);
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadSuccess(false);
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -122,8 +243,22 @@ export default function AdminPage() {
     setFormHeroBannerUrl('https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop&q=80');
     setFormIsFeatured(false);
     setFormIsTrending(false);
-    setFileName('AppSetup_v1.0.0.exe');
-    setFileSizeMB(150);
+    
+    // Reset installer upload state
+    setUploadedFileId(undefined);
+    setUploadedFileName('');
+    setUploadedFileSize(0);
+    setUploadedFormattedSize('');
+    setUploadedStorageKey('');
+    setUploadedFileHash('');
+    setFilePlatform('WINDOWS');
+    setFileArchitecture('x64');
+    setUploadSuccess(false);
+    setUploadProgress(0);
+    setIsUploading(false);
+    setUploadError(null);
+    setUploadProvider(null);
+
     setIsSoftwareModalOpen(true);
   };
 
@@ -142,14 +277,66 @@ export default function AdminPage() {
     setFormHeroBannerUrl(item.heroBannerUrl || '');
     setFormIsFeatured(item.isFeatured);
     setFormIsTrending(item.isTrending);
+
+    // Populate existing installer package if attached
+    const primary = item.downloadFiles?.find((f) => f.isPrimary) || item.downloadFiles?.[0];
+    if (primary) {
+      setUploadedFileId(primary.id);
+      setUploadedFileName(primary.fileName);
+      setUploadedFileSize(Number(primary.fileSize));
+      setUploadedFormattedSize(primary.formattedSize);
+      setUploadedStorageKey(primary.storageKey);
+      setUploadedFileHash(primary.fileHash || '');
+      setFilePlatform(primary.platform as unknown as 'WINDOWS');
+      setFileArchitecture(primary.architecture || 'x64');
+      setUploadSuccess(true);
+    } else {
+      setUploadedFileId(undefined);
+      setUploadedFileName('');
+      setUploadedFileSize(0);
+      setUploadedFormattedSize('');
+      setUploadedStorageKey('');
+      setUploadedFileHash('');
+      setFilePlatform('WINDOWS');
+      setFileArchitecture('x64');
+      setUploadSuccess(false);
+    }
+
+    setUploadProgress(0);
+    setIsUploading(false);
+    setUploadError(null);
+    setUploadProvider(null);
+
     setIsSoftwareModalOpen(true);
   };
 
   const handleSoftwareSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUploading) {
+      alert('Please wait for the installer file upload to complete before saving.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
+      const downloadFilesPayload = uploadedStorageKey && uploadedFileName
+        ? [
+            {
+              id: uploadedFileId,
+              platform: filePlatform,
+              architecture: fileArchitecture,
+              version: formVersion,
+              fileName: uploadedFileName,
+              fileSize: uploadedFileSize > 0 ? uploadedFileSize : 1024 * 1024,
+              formattedSize: uploadedFormattedSize || formatSize(uploadedFileSize),
+              fileHash: uploadedFileHash || undefined,
+              storageKey: uploadedStorageKey,
+              isPrimary: true,
+            },
+          ]
+        : [];
+
       const payload = {
         title: formTitle,
         slug: formSlug.toLowerCase().trim().replace(/[^a-z0-9-]/g, '-'),
@@ -165,20 +352,7 @@ export default function AdminPage() {
         isFeatured: formIsFeatured,
         isTrending: formIsTrending,
         isPublished: true,
-        downloadFiles: editingItem
-          ? undefined
-          : [
-              {
-                platform: filePlatform,
-                architecture: 'x64',
-                version: formVersion,
-                fileName: fileName || `${formSlug}_installer.exe`,
-                fileSize: fileSizeMB * 1024 * 1024,
-                formattedSize: `${fileSizeMB} MB`,
-                storageKey: `uploads/${formSlug}/${fileName || `${formSlug}_installer.exe`}`,
-                isPrimary: true,
-              },
-            ],
+        downloadFiles: downloadFilesPayload,
       };
 
       const url = editingItem
@@ -638,48 +812,152 @@ export default function AdminPage() {
                 />
               </div>
 
-              {!editingItem && (
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
-                  <h4 className="font-bold text-white text-xs">Primary Download Package</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-slate-400 mb-1">Platform</label>
-                      <select
-                        value={filePlatform}
-                        onChange={(e) => setFilePlatform(e.target.value as 'WINDOWS')}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200"
-                      >
-                        <option value="WINDOWS">Windows (exe)</option>
-                        <option value="MACOS">macOS (dmg)</option>
-                        <option value="LINUX">Linux (tar.gz/AppImage)</option>
-                        <option value="ANDROID">Android (apk)</option>
-                        <option value="IOS">iOS (ipa)</option>
-                      </select>
+              {/* Primary Installer Package & Direct Upload Flow */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 space-y-3.5">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <UploadCloud className="h-4 w-4 text-cyan-400" />
+                    <h4 className="font-bold text-white text-xs">
+                      {editingItem ? 'Installer Package & Binary File' : 'Upload Installer Binary'}
+                    </h4>
+                  </div>
+                  {uploadProvider && (
+                    <span className="text-[10px] font-mono rounded bg-slate-800/90 border border-slate-700 px-2 py-0.5 text-cyan-400">
+                      {uploadProvider === 'r2' ? 'Cloudflare R2 Bucket' : uploadProvider === 's3' ? 'AWS S3' : 'Local Storage Gateway'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Existing or Uploaded File Banner */}
+                {uploadedFileName && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+                      <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-400 border border-emerald-500/20 flex-shrink-0">
+                        <FileCheck className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white truncate text-xs">{uploadedFileName}</span>
+                          <span className="rounded bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.2 text-[9px] font-bold text-emerald-400">
+                            {uploadSuccess ? 'READY / ATTACHED' : 'ATTACHED'}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mt-0.5 font-mono">
+                          <span>{uploadedFormattedSize || formatSize(uploadedFileSize)}</span>
+                          <span>•</span>
+                          <span className="text-cyan-400">{filePlatform}</span>
+                          <span>•</span>
+                          <span className="text-slate-500 truncate max-w-[220px]">{uploadedStorageKey}</span>
+                        </div>
+                      </div>
                     </div>
 
-                    <div>
-                      <label className="block text-slate-400 mb-1">File Name</label>
+                    <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:text-white transition-all self-start sm:self-auto flex-shrink-0">
+                      <RefreshCw className="h-3 w-3" />
+                      <span>Replace File</span>
                       <input
-                        type="text"
-                        value={fileName}
-                        onChange={(e) => setFileName(e.target.value)}
-                        placeholder="Setup.exe"
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200"
+                        type="file"
+                        className="hidden"
+                        accept=".exe,.msi,.dmg,.pkg,.zip,.7z,.tar.gz,.apk,.ipa,.AppImage,.deb,.rpm"
+                        disabled={isUploading}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleFileUpload(f);
+                        }}
                       />
-                    </div>
+                    </label>
+                  </div>
+                )}
 
-                    <div>
-                      <label className="block text-slate-400 mb-1">Size (MB)</label>
-                      <input
-                        type="number"
-                        value={fileSizeMB}
-                        onChange={(e) => setFileSizeMB(parseInt(e.target.value, 10) || 100)}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200"
+                {/* Upload Drag & Drop / Selection Dropzone if no file attached */}
+                {!uploadedFileName && (
+                  <label className={`relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center cursor-pointer transition-all ${
+                    isUploading
+                      ? 'border-cyan-500/50 bg-cyan-950/10 cursor-not-allowed'
+                      : 'border-slate-800 bg-slate-900/30 hover:border-cyan-500/60 hover:bg-slate-900/60'
+                  }`}>
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".exe,.msi,.dmg,.pkg,.zip,.7z,.tar.gz,.apk,.ipa,.AppImage,.deb,.rpm"
+                      disabled={isUploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleFileUpload(f);
+                      }}
+                    />
+                    <div className="rounded-full bg-cyan-500/10 p-3 mb-2 text-cyan-400 border border-cyan-500/20">
+                      <FileUp className="h-5 w-5" />
+                    </div>
+                    <p className="font-semibold text-slate-200 text-xs">
+                      Click or drag installer binary to upload
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Supports .exe, .apk, .zip, .dmg, .pkg, .deb, .tar.gz, .AppImage, .ipa
+                    </p>
+                  </label>
+                )}
+
+                {/* Upload Progress Bar */}
+                {isUploading && (
+                  <div className="space-y-1.5 rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="flex items-center gap-1.5 text-cyan-300 font-semibold">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                        Uploading directly to storage bucket...
+                      </span>
+                      <span className="font-mono font-bold text-cyan-400">{uploadProgress}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-900">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-200"
+                        style={{ width: `${uploadProgress}%` }}
                       />
                     </div>
                   </div>
+                )}
+
+                {/* Error Banner */}
+                {uploadError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/20 p-2.5 text-[11px] text-rose-400">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-400" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
+
+                {/* Platform & Architecture Configuration */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-slate-400 mb-1 text-[11px] font-semibold">Target Platform</label>
+                    <select
+                      value={filePlatform}
+                      onChange={(e) => setFilePlatform(e.target.value as 'WINDOWS')}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                    >
+                      <option value="WINDOWS">Windows (.exe / .msi)</option>
+                      <option value="MACOS">macOS (.dmg / .pkg)</option>
+                      <option value="LINUX">Linux (.tar.gz / .AppImage / .deb)</option>
+                      <option value="ANDROID">Android (.apk)</option>
+                      <option value="IOS">iOS (.ipa)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 mb-1 text-[11px] font-semibold">Architecture</label>
+                    <select
+                      value={fileArchitecture}
+                      onChange={(e) => setFileArchitecture(e.target.value)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+                    >
+                      <option value="x64">x64 (64-bit)</option>
+                      <option value="arm64">arm64 (Apple Silicon / ARM)</option>
+                      <option value="universal">Universal</option>
+                      <option value="apk">Android Package (APK)</option>
+                      <option value="ipa">iOS App Package (IPA)</option>
+                    </select>
+                  </div>
                 </div>
-              )}
+              </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
                 <button
